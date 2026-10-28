@@ -1,0 +1,19 @@
+{
+  "name": "vaultsync",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=@vaultsync/web",
+    "start": "npm run start --workspace=@vaultsync/web",
+    "build": "npm run build --workspace=@vaultsync/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20.12"
+  }
+}

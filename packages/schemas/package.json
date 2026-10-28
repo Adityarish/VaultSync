@@ -1,0 +1,10 @@
+{
+  "name": "@vaultsync/schemas",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": { "zod": "latest" },
+  "scripts": { "typecheck": "tsc --noEmit", "test": "vitest run" },
+  "devDependencies": { "vitest": "latest", "typescript": "latest" }
+}
