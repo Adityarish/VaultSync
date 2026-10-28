@@ -52,8 +52,8 @@ export function ApplicationBackupsView() {
     const invalid = selected.find((file) => !/\.(apk|apks|xapk)$/i.test(file.name));
     if (invalid) return setMessage({ kind: "error", text: `${invalid.name} is not an APK, APKS, or XAPK file.` });
     try {
-      await addFiles(selected, "apks");
-      setMessage({ kind: "success", text: `${selected.length} application package${selected.length === 1 ? "" : "s"} added to the backup queue.` });
+      const result = await addFiles(selected, "apks");
+      setMessage({ kind: "success", text: `${result.added} application package${result.added === 1 ? "" : "s"} added to the backup queue.${result.duplicatesSkipped ? ` ${result.duplicatesSkipped} duplicate${result.duplicatesSkipped === 1 ? " was" : "s were"} skipped.` : ""}` });
     } catch (error) {
       setMessage({ kind: "error", text: error instanceof Error ? error.message : "The application packages could not be queued." });
     } finally {

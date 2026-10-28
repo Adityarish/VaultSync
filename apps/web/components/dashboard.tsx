@@ -27,16 +27,16 @@ export function Dashboard() {
   const input = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
   const [adding, setAdding] = useState(false);
-  const [addError, setAddError] = useState<string>();
+  const [addMessage, setAddMessage] = useState<{ kind: "info" | "error"; text: string }>();
   const [dayGreeting, setDayGreeting] = useState("day");
   const queue = useLiveQuery(() => localDb.queue.orderBy("createdAt").reverse().toArray(), []) ?? [];
   const files = useLiveQuery(() => localDb.files.toArray(), []) ?? [];
   const latestRun = useLiveQuery(() => localDb.runs.orderBy("createdAt").last(), []);
   const active = queue.some((item) => item.state === "uploading" || item.state === "hashing");
   const pending = queue.some((item) => ["queued", "paused", "failed"].includes(item.state));
-  const mockFiles = isMock ? remoteBackups.data ?? [] : [];
-  const protectedBytes = isMock ? mockFiles.reduce((sum, file) => sum + Number(file.size_bytes), 0) : files.filter((file) => file.verifiedAt).reduce((sum, file) => sum + file.size, 0);
-  const protectedCount = isMock ? mockFiles.length : files.filter((file) => file.verifiedAt).length;
+  const protectedFiles = remoteBackups.data ?? [];
+  const protectedBytes = protectedFiles.reduce((sum, file) => sum + Number(file.size_bytes), 0);
+  const protectedCount = protectedFiles.length;
   const current = queue.find((item) => item.state === "uploading" || item.state === "hashing");
   const currentFile = current ? files.find((file) => file.id === current.localFileId) : undefined;
 
@@ -44,9 +44,12 @@ export function Dashboard() {
 
   const onFiles = async (selected: FileList | null) => {
     if (!selected?.length) return;
-    setAdding(true); setAddError(undefined);
-    try { await addFiles(Array.from(selected)); }
-    catch (error) { setAddError(error instanceof Error ? error.message : "The selected files could not be added to browser storage."); }
+    setAdding(true); setAddMessage(undefined);
+    try {
+      const result = await addFiles(Array.from(selected));
+      if (result.duplicatesSkipped) setAddMessage({ kind: "info", text: `${result.added} file${result.added === 1 ? "" : "s"} added; ${result.duplicatesSkipped} duplicate${result.duplicatesSkipped === 1 ? " was" : "s were"} skipped.` });
+    }
+    catch (error) { setAddMessage({ kind: "error", text: error instanceof Error ? error.message : "The selected files could not be added to browser storage." }); }
     finally { setAdding(false); if (input.current) input.current.value = ""; if (folderInput.current) folderInput.current.value = ""; }
   };
 
@@ -59,7 +62,7 @@ export function Dashboard() {
           <div className="flex items-start justify-between"><div><p className="text-[11px] uppercase tracking-[.16em] text-[var(--muted)]">Protected by VaultSync</p><div className="mt-2 flex items-baseline gap-2"><strong className="text-4xl tracking-[-.05em]">{formatBytes(protectedBytes)}</strong><span className="text-xs text-[var(--muted)]">verified</span></div></div><div className="grid size-11 place-items-center rounded-2xl bg-emerald-400/10 text-emerald-300"><ShieldCheck size={21}/></div></div>
           <div className="mt-7 grid gap-5 sm:grid-cols-[190px_1fr] sm:items-center">
             <div className="relative mx-auto grid size-44 place-items-center rounded-full mesh-ring p-[12px]"><div className="grid size-full place-items-center rounded-full bg-[var(--panel)] text-center"><span><b className="block text-3xl">{protectedCount}</b><small className="text-[var(--muted)]">protected files</small></span></div></div>
-            <div className="grid grid-cols-2 gap-2.5">{categories.map(({ key, label, icon: Icon, color }) => { const count = isMock ? mockFiles.filter((f) => f.category === key).length : files.filter((f) => f.category === key && f.verifiedAt).length; return <Link href={key === "photos" || key === "videos" ? "/gallery" : key === "contacts" ? "/contacts" : "/files"} key={key} className="soft-card group rounded-2xl p-3.5 transition hover:-translate-y-0.5 hover:border-white/20"><Icon size={17} style={{ color }}/><div className="mt-5 flex items-end justify-between"><span><b className="block text-lg">{count}</b><small className="text-[var(--muted)]">{label}</small></span><ChevronRight size={15} className="text-[var(--muted)] transition group-hover:translate-x-1"/></div></Link>; })}</div>
+            <div className="grid grid-cols-2 gap-2.5">{categories.map(({ key, label, icon: Icon, color }) => { const count = protectedFiles.filter((file) => file.category === key).length; return <Link href={key === "photos" || key === "videos" ? "/gallery" : key === "contacts" ? "/contacts" : "/files"} key={key} className="soft-card group rounded-2xl p-3.5 transition hover:-translate-y-0.5 hover:border-white/20"><Icon size={17} style={{ color }}/><div className="mt-5 flex items-end justify-between"><span><b className="block text-lg">{count}</b><small className="text-[var(--muted)]">{label}</small></span><ChevronRight size={15} className="text-[var(--muted)] transition group-hover:translate-x-1"/></div></Link>; })}</div>
           </div>
         </section>
 
@@ -68,7 +71,7 @@ export function Dashboard() {
           <h2 className="mt-7 text-2xl font-semibold tracking-[-.04em]">Back up this device</h2><p className="mt-2 text-sm leading-relaxed text-[var(--muted)]">Choose files or a folder. Nothing uploads until you review and start the queue.</p>
           <input ref={input} className="hidden" type="file" multiple onChange={(event) => void onFiles(event.target.files)} />
           <input ref={folderInput} className="hidden" type="file" multiple {...({ webkitdirectory: "", directory: "" } as React.InputHTMLAttributes<HTMLInputElement>)} onChange={(event) => void onFiles(event.target.files)} />
-          {addError && <p role="alert" className="mt-4 flex items-start gap-2 rounded-xl border border-red-300/15 bg-red-300/[.06] p-3 text-xs text-red-100"><AlertCircle className="mt-0.5 shrink-0" size={14}/>{addError}</p>}
+          {addMessage && <p role={addMessage.kind === "error" ? "alert" : "status"} className={`mt-4 flex items-start gap-2 rounded-xl border p-3 text-xs ${addMessage.kind === "error" ? "border-red-300/15 bg-red-300/[.06] text-red-100" : "border-amber-300/15 bg-amber-300/[.06] text-amber-100"}`}><AlertCircle className="mt-0.5 shrink-0" size={14}/>{addMessage.text}</p>}
           {isMock ? <Link href="/gallery" className="gradient-button mt-6 flex items-center justify-center rounded-xl px-4 py-3 text-sm font-semibold">Explore the demo library <ArrowUpRight className="ml-2" size={16}/></Link> : me.data?.authenticated ? <div className="mt-6 grid grid-cols-2 gap-2"><button type="button" onClick={() => input.current?.click()} className="gradient-button rounded-xl px-4 py-3 text-sm font-semibold">Choose files</button><button type="button" onClick={() => folderInput.current?.click()} className="rounded-xl border border-white/10 bg-white/[.045] px-4 py-3 text-sm"><FolderOpen className="mr-2 inline" size={16}/>Folder</button></div> : <DriveConnectButton className="gradient-button mt-6 flex w-full items-center justify-center rounded-xl px-4 py-3 text-sm font-semibold"/>}
           <p className="mt-4 flex items-center gap-2 text-[11px] text-[var(--muted)]"><Cloud size={13}/>{isMock ? "Preview only — no files are uploaded." : "Uses the limited drive.file permission."}</p>
         </section>

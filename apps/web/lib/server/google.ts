@@ -47,3 +47,12 @@ export async function ensureDestination(account: Account, deviceId: string, cate
   const destinationFolderId = await getOrCreateFolder(token, labels[category] ?? "Backups", device, `category-${category}`);
   return { rootFolderId, destinationFolderId, token };
 }
+
+export async function deleteDriveFile(token: string, fileId: string): Promise<void> {
+  const response = await fetchWithTimeout(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+  if (!response.ok && response.status !== 404) throw new Error(`Google Drive delete failed (${response.status}).`);
+}

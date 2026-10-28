@@ -145,7 +145,7 @@ async function refreshRun(backupId: string) {
   const done = complete.length + failed.length + skipped.length === items.length;
   const terminalState = complete.length === 0 && failed.length === 0 && skipped.length > 0 ? "cancelled" : failed.length ? "partial" : "complete";
   await localDb.runs.update(backupId, { state: done ? terminalState : pauseRequested ? "paused" : "running", completedAt: done ? Date.now() : undefined, uploadedFiles: complete.length, uploadedBytes: complete.reduce((sum, item) => sum + item.uploadedBytes, 0), failedFiles: failed.length });
-  if (done && failed.length === 0 && items.length > 0) {
+  if (done && failed.length === 0 && complete.length > 0) {
     const finalized = await fetch(`/api/backups/${backupId}/complete`, { method: "POST" }).catch(() => null);
     if (!finalized?.ok) await localDb.runs.update(backupId, { state: "partial" });
   }

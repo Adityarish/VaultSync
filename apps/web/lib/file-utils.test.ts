@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { categoryForFile, formatBytes, sha256 } from "./file-utils";
+import { categoryForFile, fileIdentity, formatBytes, sha256 } from "./file-utils";
 
 describe("file utilities", () => {
   it("classifies supported backup categories without trusting a filename alone", () => {
@@ -17,5 +17,10 @@ describe("file utilities", () => {
     expect(formatBytes(0)).toBe("0 B");
     expect(formatBytes(1536)).toBe("2 KB");
     expect(formatBytes(5 * 1024 ** 3)).toBe("5 GB");
+  });
+
+  it("builds a stable identity for duplicate file selections", () => {
+    expect(fileIdentity({ name: "photo.jpg", size: 2048, lastModified: 123 } as File)).toBe("photo.jpg\u00002048\u0000123");
+    expect(fileIdentity({ name: "photo.jpg", webkitRelativePath: "DCIM/photo.jpg", size: 2048, lastModified: 123 } as File)).toBe("DCIM/photo.jpg\u00002048\u0000123");
   });
 });
