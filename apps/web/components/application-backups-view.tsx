@@ -7,6 +7,7 @@ import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 import { addFiles } from "@/lib/backup-engine";
 import { parseApplicationInventory } from "@/lib/application-inventory";
+import { fetchDriveFile } from "@/lib/drive-client";
 import { formatBytes } from "@/lib/file-utils";
 import { localDb } from "@/lib/local-db";
 import { useRemoteBackups } from "@/lib/remote-backups";
@@ -36,8 +37,7 @@ export function ApplicationBackupsView() {
     queryFn: async () => {
       if (!latestInventoryBackup) return null;
       if (Number(latestInventoryBackup.size_bytes) > MAX_INVENTORY_BYTES) throw new Error("The latest inventory is too large to preview safely.");
-      const response = await fetch(`/api/drive/files/${encodeURIComponent(latestInventoryBackup.id)}/download`, { cache: "no-store" });
-      if (!response.ok) throw new Error("The latest application inventory could not be opened.");
+      const response = await fetchDriveFile(latestInventoryBackup, { mockData: Boolean(me.data?.mockData) });
       return parseApplicationInventory(await response.text());
     },
   });

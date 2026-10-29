@@ -14,6 +14,14 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
       return NextResponse.json(MOCK_APPLICATION_INVENTORY, { headers: { "Content-Disposition": `attachment; filename="${mock.original_filename}"`, "Cache-Control": "no-store" } });
     }
     const safeMockName = mock.original_filename.replace(/["\r\n]/g, "_");
+    if (preview && mock.category === "contacts") {
+      const mockContacts = [
+        "BEGIN:VCARD", "VERSION:3.0", "FN:Aarav Sharma", "TEL;TYPE=CELL:+91 98765 43210", "EMAIL:aarav@example.com", "END:VCARD",
+        "BEGIN:VCARD", "VERSION:3.0", "FN:Meera Iyer", "TEL;TYPE=CELL:+91 99887 76655", "TEL;TYPE=HOME:+91 80 2345 6789", "EMAIL:meera@example.com", "END:VCARD",
+        "BEGIN:VCARD", "VERSION:3.0", "FN:Kabir Singh", "TEL;TYPE=CELL:+91 91234 56789", "ADR:;;Sector 17;Chandigarh;;;India", "END:VCARD",
+      ].join("\r\n");
+      return new NextResponse(mockContacts, { headers: { "Content-Type": "text/vcard; charset=utf-8", "Content-Disposition": `inline; filename="${safeMockName}"`, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
+    }
     const mockBody = `VaultSync UI preview file\n\n${mock.original_filename}\nThis is mock data and not a real backup.\n`;
     const mockMime = preview ? mock.mime_type || "text/plain; charset=utf-8" : "text/plain; charset=utf-8";
     const mockName = preview ? safeMockName : `DEMO-${safeMockName}.txt`;

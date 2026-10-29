@@ -3,13 +3,19 @@
 import { localDb } from "./local-db";
 import { deleteFileBlob, getFileBlob, saveFileBlob } from "./file-vault";
 import { categoryForFile, fileIdentity, sha256 } from "./file-utils";
+import { runInParallel } from "./parallel";
 import type { BackupCategory, BackupRun, LocalFileRecord, QueueItem } from "./types";
 import { uploadToDrive } from "./drive-upload";
+
+export const MAX_PARALLEL_UPLOADS = 3;
 
 type Listener = () => void;
 const listeners = new Set<Listener>();
 let activeController: AbortController | null = null;
 let pauseRequested = false;
+let cancelRequested = false;
+const checksumLocks = new Map<string, Promise<void>>();
+const runRefreshLocks = new Map<string, Promise<void>>();
 let queueVersion = 0;
 const notify = () => { queueVersion += 1; listeners.forEach((listener) => listener()); };
 export const subscribeQueue = (listener: Listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
@@ -63,8 +69,8 @@ export async function addFiles(files: File[], categoryOverride?: BackupCategory)
   return { backupId, added: accepted.length, duplicatesSkipped };
 }
 
-async function remoteDuplicate(checksum: string): Promise<boolean> {
-  const response = await fetch(`/api/backups/items?checksum=${encodeURIComponent(checksum)}`, { cache: "no-store" });
+async function remoteDuplicate(checksum: string, signal: AbortSignal): Promise<boolean> {
+  const response = await fetch(`/api/backups/items?checksum=${encodeURIComponent(checksum)}`, { cache: "no-store", signal });
   if (!response.ok) return false;
   return Boolean((await response.json() as { duplicate?: boolean }).duplicate);
 }
@@ -77,67 +83,114 @@ async function finalizeItem(item: QueueItem, fileRecord: LocalFileRecord, driveF
   if (!response.ok) throw new Error("The file reached Drive, but its recovery metadata could not be committed. Retry to finish safely.");
 }
 
+function throwIfStopped(signal: AbortSignal) {
+  if (signal.aborted || pauseRequested || cancelRequested) throw new DOMException("Aborted", "AbortError");
+}
+
+async function withKeyLock<T>(locks: Map<string, Promise<void>>, key: string, task: () => Promise<T>): Promise<T> {
+  const previous = locks.get(key) ?? Promise.resolve();
+  let release = () => {};
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  const tail = previous.then(() => current);
+  locks.set(key, tail);
+  await previous;
+  try {
+    return await task();
+  } finally {
+    release();
+    if (locks.get(key) === tail) locks.delete(key);
+  }
+}
+
+async function processQueueItem(item: QueueItem, signal: AbortSignal) {
+  try {
+    const fileRecord = await localDb.files.get(item.localFileId);
+    const file = await getFileBlob(item.localFileId);
+    if (!fileRecord || !file) {
+      await localDb.queue.update(item.id, { state: "failed", error: "The local file is no longer available. Select it again.", updatedAt: Date.now() });
+      return;
+    }
+
+    await localDb.runs.update(item.backupId, { state: "running" });
+    await localDb.queue.update(item.id, { state: "hashing", error: undefined, attempts: item.attempts + 1, updatedAt: Date.now() });
+    notify();
+    const checksum = fileRecord.checksum ?? await sha256(file);
+    throwIfStopped(signal);
+    await localDb.files.update(fileRecord.id, { checksum });
+    await withKeyLock(checksumLocks, checksum, async () => {
+      throwIfStopped(signal);
+      const duplicate = await localDb.files.where("checksum").equals(checksum).and((candidate) => Boolean(candidate.verifiedAt && candidate.driveFileId && candidate.id !== fileRecord.id)).first();
+      const isRemoteDuplicate = !fileRecord.driveFileId && !duplicate?.driveFileId && await remoteDuplicate(checksum, signal);
+      throwIfStopped(signal);
+      if (!fileRecord.driveFileId && (duplicate?.driveFileId || isRemoteDuplicate)) {
+        await localDb.queue.update(item.id, { state: "skipped", error: "Duplicate skipped: this exact file is already backed up.", updatedAt: Date.now() });
+        await localDb.files.delete(fileRecord.id);
+        await deleteFileBlob(fileRecord.id);
+        return;
+      }
+      if (fileRecord.driveFileId) {
+        await finalizeItem(item, fileRecord, fileRecord.driveFileId, checksum);
+        await localDb.files.update(fileRecord.id, { verifiedAt: Date.now() });
+        await localDb.queue.update(item.id, { state: "verified", progress: 100, uploadedBytes: file.size, updatedAt: Date.now() });
+      } else {
+        await localDb.queue.update(item.id, { state: "uploading", updatedAt: Date.now() });
+        notify();
+        const result = await uploadToDrive(file, {
+          category: fileRecord.category,
+          existingSession: item.resumableUrl, signal,
+          onSession: async (url) => { await localDb.queue.update(item.id, { resumableUrl: url, updatedAt: Date.now() }); },
+          onProgress: async (uploadedBytes) => { await localDb.queue.update(item.id, { uploadedBytes, progress: Math.round(uploadedBytes / file.size * 100), updatedAt: Date.now() }); notify(); },
+        });
+        await localDb.files.update(fileRecord.id, { driveFileId: result.id });
+        await finalizeItem(item, fileRecord, result.id, checksum);
+        await localDb.files.update(fileRecord.id, { driveFileId: result.id, verifiedAt: Date.now() });
+        await localDb.queue.update(item.id, { state: "verified", progress: 100, uploadedBytes: file.size, resumableUrl: undefined, updatedAt: Date.now() });
+      }
+      await deleteFileBlob(fileRecord.id);
+    });
+  } catch (error) {
+    if (!cancelRequested) {
+      const current = await localDb.queue.get(item.id);
+      if (current?.state !== "cancelled") {
+        await localDb.queue.update(item.id, {
+          state: pauseRequested ? "paused" : "failed",
+          error: pauseRequested ? undefined : error instanceof Error ? error.message : "Unexpected backup failure",
+          updatedAt: Date.now(),
+        });
+      }
+    }
+  } finally {
+    await refreshRun(item.backupId);
+    notify();
+  }
+}
+
 export async function startQueue(): Promise<void> {
   if (activeController) return;
   pauseRequested = false;
-  activeController = new AbortController();
+  cancelRequested = false;
+  const controller = new AbortController();
+  activeController = controller;
   try {
     const pending = await localDb.queue.where("state").anyOf("queued", "failed", "paused").sortBy("createdAt");
-    for (const item of pending) {
-      if (pauseRequested) break;
-      const fileRecord = await localDb.files.get(item.localFileId);
-      const file = await getFileBlob(item.localFileId);
-      if (!fileRecord || !file) {
-        await localDb.queue.update(item.id, { state: "failed", error: "The local file is no longer available. Select it again.", updatedAt: Date.now() });
-        continue;
-      }
-      try {
-        await localDb.runs.update(item.backupId, { state: "running" });
-        await localDb.queue.update(item.id, { state: "hashing", error: undefined, attempts: item.attempts + 1, updatedAt: Date.now() });
-        notify();
-        const checksum = fileRecord.checksum ?? await sha256(file);
-        await localDb.files.update(fileRecord.id, { checksum });
-        const duplicate = await localDb.files.where("checksum").equals(checksum).and((candidate) => Boolean(candidate.verifiedAt && candidate.driveFileId && candidate.id !== fileRecord.id)).first();
-        if (!fileRecord.driveFileId && (duplicate?.driveFileId || await remoteDuplicate(checksum))) {
-          await localDb.queue.update(item.id, { state: "skipped", error: "Duplicate skipped: this exact file is already backed up.", updatedAt: Date.now() });
-          await localDb.files.delete(fileRecord.id);
-          await deleteFileBlob(fileRecord.id);
-          await refreshRun(item.backupId);
-          notify();
-          continue;
-        }
-        if (fileRecord.driveFileId) {
-          await finalizeItem(item, fileRecord, fileRecord.driveFileId, checksum);
-          await localDb.files.update(fileRecord.id, { verifiedAt: Date.now() });
-          await localDb.queue.update(item.id, { state: "verified", progress: 100, uploadedBytes: file.size, updatedAt: Date.now() });
-        } else {
-          await localDb.queue.update(item.id, { state: "uploading", updatedAt: Date.now() });
-          const result = await uploadToDrive(file, {
-            category: fileRecord.category,
-            existingSession: item.resumableUrl, signal: activeController.signal,
-            onSession: async (url) => { await localDb.queue.update(item.id, { resumableUrl: url, updatedAt: Date.now() }); },
-            onProgress: async (uploadedBytes) => { await localDb.queue.update(item.id, { uploadedBytes, progress: Math.round(uploadedBytes / file.size * 100), updatedAt: Date.now() }); notify(); },
-          });
-          await localDb.files.update(fileRecord.id, { driveFileId: result.id });
-          await finalizeItem(item, fileRecord, result.id, checksum);
-          await localDb.files.update(fileRecord.id, { driveFileId: result.id, verifiedAt: Date.now() });
-          await localDb.queue.update(item.id, { state: "verified", progress: 100, uploadedBytes: file.size, resumableUrl: undefined, updatedAt: Date.now() });
-        }
-        await deleteFileBlob(fileRecord.id);
-      } catch (error) {
-        const aborted = error instanceof DOMException && error.name === "AbortError";
-        await localDb.queue.update(item.id, { state: aborted && pauseRequested ? "paused" : "failed", error: aborted && pauseRequested ? undefined : error instanceof Error ? error.message : "Unexpected backup failure", updatedAt: Date.now() });
-      }
-      await refreshRun(item.backupId);
-      notify();
-    }
+    await runInParallel(
+      pending,
+      MAX_PARALLEL_UPLOADS,
+      (item) => processQueueItem(item, controller.signal),
+      () => !pauseRequested && !cancelRequested,
+    );
   } finally {
-    activeController = null;
+    if (activeController === controller) activeController = null;
     notify();
   }
 }
 
 async function refreshRun(backupId: string) {
+  await withKeyLock(runRefreshLocks, backupId, () => refreshRunNow(backupId));
+}
+
+async function refreshRunNow(backupId: string) {
+  const previousRun = await localDb.runs.get(backupId);
   const items = await localDb.queue.where("backupId").equals(backupId).toArray();
   const complete = items.filter((item) => item.state === "verified");
   const failed = items.filter((item) => item.state === "failed");
@@ -145,7 +198,7 @@ async function refreshRun(backupId: string) {
   const done = complete.length + failed.length + skipped.length === items.length;
   const terminalState = complete.length === 0 && failed.length === 0 && skipped.length > 0 ? "cancelled" : failed.length ? "partial" : "complete";
   await localDb.runs.update(backupId, { state: done ? terminalState : pauseRequested ? "paused" : "running", completedAt: done ? Date.now() : undefined, uploadedFiles: complete.length, uploadedBytes: complete.reduce((sum, item) => sum + item.uploadedBytes, 0), failedFiles: failed.length });
-  if (done && failed.length === 0 && complete.length > 0) {
+  if (done && failed.length === 0 && complete.length > 0 && previousRun?.state !== "complete") {
     const finalized = await fetch(`/api/backups/${backupId}/complete`, { method: "POST" }).catch(() => null);
     if (!finalized?.ok) await localDb.runs.update(backupId, { state: "partial" });
   }
@@ -155,6 +208,7 @@ export function pauseQueue() { pauseRequested = true; activeController?.abort();
 
 export async function cancelPending() {
   pauseRequested = false;
+  cancelRequested = true;
   activeController?.abort();
   const items = await localDb.queue.where("state").anyOf("queued", "paused", "failed", "hashing", "uploading").toArray();
   await localDb.queue.bulkUpdate(items.map((item) => ({ key: item.id, changes: { state: "cancelled" as const, updatedAt: Date.now() } })));

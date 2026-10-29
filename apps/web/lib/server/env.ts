@@ -2,7 +2,7 @@ import "server-only";
 import { z } from "zod";
 
 const schema = z.object({
-  NEXT_PUBLIC_APP_URL: z.string().url().default("http://127.0.0.1:3000"),
+  NEXT_PUBLIC_APP_URL: z.string().url().refine((value) => !value.endsWith("/"), "NEXT_PUBLIC_APP_URL must not have a trailing slash").default("http://127.0.0.1:3000"),
   GOOGLE_CLIENT_ID: z.string().min(1),
   GOOGLE_CLIENT_SECRET: z.string().min(1),
   SESSION_SECRET: z.string().min(32),
