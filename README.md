@@ -39,7 +39,7 @@ Open <http://127.0.0.1:3000>. The app intentionally shows a disconnected state u
 
 ## Production
 
-Import the repository with its root directory set to `.`; the committed `vercel.json` builds the web workspace. Set the variables from `.env.example`, change `NEXT_PUBLIC_APP_URL` to the exact HTTPS production origin with no trailing slash, and add `<origin>/api/auth/google/callback` to the Google OAuth client. Run `npm run vercel:check` and `npm run build` before deployment. Follow [docs/deployment.md](docs/deployment.md) for the exact Vercel, Supabase, and Google Cloud sequence.
+The production app is `https://vaultsync-mu.vercel.app`. In Vercel, set `NEXT_PUBLIC_APP_URL=https://vaultsync-mu.vercel.app`. In the matching Google OAuth Web client, set the authorized JavaScript origin to `https://vaultsync-mu.vercel.app` and the authorized redirect URI to `https://vaultsync-mu.vercel.app/api/auth/google/callback`. Import the repository with its root directory set to `.`; the committed `vercel.json` builds the web workspace. Run `npm run vercel:check` and `npm run build` before deployment. Follow [docs/deployment.md](docs/deployment.md) for the exact Vercel, Supabase, and Google Cloud sequence.
 
 No private file contents, tokens, or credentials belong in Git.
 

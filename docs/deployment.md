@@ -2,6 +2,14 @@
 
 The repository is deployment-ready, but the first live connection still needs your Vercel, Supabase, and Google Cloud accounts. Do not commit `.env.local`, refresh tokens, service-role keys, or generated secrets.
 
+## VaultSync production URLs
+
+- Application origin: `https://vaultsync-mu.vercel.app`
+- Google authorized JavaScript origin: `https://vaultsync-mu.vercel.app`
+- Google authorized redirect URI: `https://vaultsync-mu.vercel.app/api/auth/google/callback`
+
+Enter these values exactly. Do not add a trailing slash and do not use a Vercel preview URL for this OAuth client.
+
 ## 1. Prepare Supabase
 
 1. Create a Supabase project.
@@ -20,7 +28,7 @@ The repository is deployment-ready, but the first live connection still needs yo
 
 In **Project → Settings → Environment Variables**, add these to Production. Add them to Preview only if preview deployments should connect to the same private backend.
 
-- `NEXT_PUBLIC_APP_URL` — exact production origin, for example `https://vaultsync.vercel.app`; HTTPS only and no trailing slash.
+- `NEXT_PUBLIC_APP_URL` — `https://vaultsync-mu.vercel.app`; HTTPS only and no trailing slash.
 - `GOOGLE_CLIENT_ID` — Google OAuth Web client ID.
 - `GOOGLE_CLIENT_SECRET` — matching Google OAuth client secret.
 - `SESSION_SECRET` — at least 32 random characters; generate with `openssl rand -base64 48`.
@@ -38,10 +46,12 @@ In the same Google Cloud project as `GOOGLE_CLIENT_ID`:
 
 1. Configure the OAuth consent screen.
 2. Create or edit a **Web application** OAuth client.
-3. Add `https://YOUR-PRODUCTION-DOMAIN/api/auth/google/callback` under **Authorized redirect URIs**. It must exactly match `NEXT_PUBLIC_APP_URL` plus `/api/auth/google/callback`.
-4. Add the production origin under **Authorized JavaScript origins**.
+3. Add `https://vaultsync-mu.vercel.app/api/auth/google/callback` under **Authorized redirect URIs**.
+4. Add `https://vaultsync-mu.vercel.app` under **Authorized JavaScript origins**.
 5. While the consent screen is in Testing, add every permitted Google account under **Google Auth Platform → Audience → Test users**.
 6. Keep scopes limited to `openid`, `email`, `profile`, and `https://www.googleapis.com/auth/drive.file`.
+
+Copy the client ID and client secret from this same Web application into Vercel as `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`. Never put the client secret in a `NEXT_PUBLIC_` variable.
 
 Use the stable production domain for OAuth. Random Vercel preview URLs are not automatically valid Google redirect URIs.
 

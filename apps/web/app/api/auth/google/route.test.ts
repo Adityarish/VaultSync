@@ -38,4 +38,14 @@ describe("GET /api/auth/google", () => {
     expect(cookies.some((cookie) => cookie.name === "vaultsync_oauth_state")).toBe(true);
     expect(cookies.some((cookie) => cookie.name === "vaultsync_pkce")).toBe(true);
   });
+
+  it("rejects a localhost OAuth origin in Vercel", async () => {
+    process.env.VERCEL = "1";
+    const { GET } = await import("./route");
+    const { NextRequest } = await import("next/server");
+    const response = await GET(new NextRequest("https://vaultsync-mu.vercel.app/api/auth/google", { headers: { host: "vaultsync-mu.vercel.app" } }));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("http://127.0.0.1:3000/settings?error=server_configuration");
+  });
 });

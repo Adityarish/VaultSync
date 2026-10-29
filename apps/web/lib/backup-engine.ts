@@ -6,6 +6,7 @@ import { categoryForFile, fileIdentity, sha256 } from "./file-utils";
 import { runInParallel } from "./parallel";
 import type { BackupCategory, BackupRun, LocalFileRecord, QueueItem } from "./types";
 import { uploadToDrive } from "./drive-upload";
+import { commitBackupMetadata } from "./metadata-commit";
 
 export const MAX_PARALLEL_UPLOADS = 3;
 
@@ -76,11 +77,7 @@ async function remoteDuplicate(checksum: string, signal: AbortSignal): Promise<b
 }
 
 async function finalizeItem(item: QueueItem, fileRecord: LocalFileRecord, driveFileId: string, checksum: string) {
-  const response = await fetch("/api/backups/items", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ backupId: item.backupId, localId: fileRecord.id, driveFileId, name: fileRecord.name, relativePath: fileRecord.relativePath, size: fileRecord.size, mimeType: fileRecord.type, lastModified: fileRecord.lastModified, category: fileRecord.category, checksum }),
-  });
-  if (!response.ok) throw new Error("The file reached Drive, but its recovery metadata could not be committed. Retry to finish safely.");
+  await commitBackupMetadata({ backupId: item.backupId, localId: fileRecord.id, driveFileId, name: fileRecord.name, relativePath: fileRecord.relativePath, size: fileRecord.size, mimeType: fileRecord.type, lastModified: fileRecord.lastModified, category: fileRecord.category, checksum });
 }
 
 function throwIfStopped(signal: AbortSignal) {

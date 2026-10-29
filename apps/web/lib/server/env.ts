@@ -13,9 +13,25 @@ const schema = z.object({
 
 export type ServerEnv = z.infer<typeof schema>;
 let cached: ServerEnv | undefined;
+
+function parseServerEnv(): ServerEnv {
+  const parsed = schema.parse(process.env);
+  if (process.env.VERCEL === "1") {
+    const appUrl = new URL(parsed.NEXT_PUBLIC_APP_URL);
+    const isLocalHost = appUrl.hostname === "localhost" || appUrl.hostname === "127.0.0.1" || appUrl.hostname === "::1";
+    if (appUrl.protocol !== "https:" || isLocalHost || appUrl.origin !== parsed.NEXT_PUBLIC_APP_URL) {
+      throw new Error("NEXT_PUBLIC_APP_URL must be the exact HTTPS production origin when running on Vercel.");
+    }
+  }
+  return parsed;
+}
+
 export function serverEnv(): ServerEnv {
-  if (!cached) cached = schema.parse(process.env);
+  if (!cached) cached = parseServerEnv();
   return cached;
 }
 
-export function isServerConfigured(): boolean { return schema.safeParse(process.env).success; }
+export function isServerConfigured(): boolean {
+  try { parseServerEnv(); return true; }
+  catch { return false; }
+}

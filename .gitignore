@@ -53,10 +53,12 @@ supabase/.temp/
 **/.cxx/
 apps/android/**/build/
 
-# Private local backup/export data
-backups/
-exports/
-uploads/
+# Private local backup/export data at the repository root. Leading slashes are
+# required so Next.js API directories such as apps/web/app/api/backups remain
+# deployable source code.
+/backups/
+/exports/
+/uploads/
 
 # Test and tool artifacts
 playwright-report/
